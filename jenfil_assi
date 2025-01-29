@@ -1,0 +1,103 @@
+pipeline {
+    agent any
+
+    stages {
+               stage('4733094m-opr-s1') {
+            steps {
+                script {
+                    echo '4733094m-opr-s1: Creating backup for UAT server'
+                    sh 'docker rmi -f uatsvr_image || true'
+                    sh 'docker commit 4733094m_uatsvr uatsvr_image'
+                    
+                    echo '4733094m-opr-s1: Updating UAT server'
+                    sh '''#!/bin/bash
+                    puppet resource file /tmp/research ensure=absent force=true
+                    puppet resource file /tmp/research ensure=directory
+                    cd /tmp/research
+                    git clone https://github.com/divya577/4733094m_op_repo.git
+
+                    targets=4733094m_uatsvr.localdomain
+                    locate_script='/tmp/research/4733094m_op_repo/4733094m_script'
+
+                    bolt script run $locate_script -t $targets -u root --no-host-key-check --run-as root
+                    '''
+
+                    echo '4733094m-opr-s1: UAT web server is backup and updated'
+                }
+            }
+        }
+
+
+        stage('4733094m-opr-s2') {
+            steps {
+                script {
+                    echo '4733094m-opr-s2: Verifying UAT server'
+                    def result = sh(script: "curl -Is http://4733094m_uatsvr.localdomain | head -n 1", returnStatus: true)
+                    if (result == 0) {
+                        echo '4733094m-opr-s2: UAT server is running'
+                    } else {
+                        error('4733094m-opr-s2: UAT server fails')
+                    }
+                }
+            }
+        }
+
+        stage('4733094m-opr-s3') {
+            steps {
+                input message: '4733094m-opr-s3: Proceed with stress test on UAT web server?', ok: 'Proceed'
+                echo '4733094m-opr-s3: Stress test in progress'
+            }
+        }
+
+        stage('4733094m-opr-s4') {
+            steps {
+                echo '4733094m-opr-s4: Stress test result is good'
+            }
+        }
+
+        stage('4733094m-opr-s5') {
+            steps {
+                input message: '4733094m-opr-s5: Deploy new update to PROD web server?', ok: 'Proceed'
+                echo '4733094m-opr-s5: Deploying to PROD'
+            }
+        }
+
+        stage('4733094m-opr-s6') {
+            steps {
+                script {
+                    echo '4733094m-opr-s6: Creating backup for PROD server'
+                    sh 'docker rmi -f prodsvr_image || true' // Remove old backup image if exists
+                    sh 'docker commit 4733094m_prodsvr prodsvr_image' // Create new backup image
+                    echo '4733094m-opr-s6: Backup image created'
+                    
+                    echo '4733094m-opr-s6: Updating PROD server'
+                    sh 'bolt script run 4733094m_script --targets 4733094m_prodsvr' 
+                    echo '4733094m-opr-s6: PROD web server is backup and updated'
+                }
+            }
+        }
+
+        stage('4733094m-opr-s7') {
+            steps {
+                script {
+                    echo '4733094m-opr-s7: Verifying PROD server'
+                    def result = sh(script: "curl -Is http://4733094m_prodsvr.localdomain | head -n 1", returnStatus: true)
+                    if (result == 0) {
+                        echo '4733094m-opr-s7: Production website is operational'
+                    } else {
+                        input message: 'Production website failed. Choose an action:',
+                              parameters: [
+                                  choice(name: 'Action', choices: 'Trigger roll back\nTroubleshooting', description: 'Choose an option')
+                              ]
+                        if (params.Action == 'Trigger roll back') {
+                            echo '4733094m-opr-s7: Production website is rolling back'
+                        } else {
+                            echo '4733094m-opr-s7: Troubleshooting of Production website is in progress'
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
